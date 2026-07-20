@@ -19,7 +19,7 @@ ENV/
 *~
 generated/
 uploads/
-models/
+/models/
 *.wav
 *.mp3
 *.mp4

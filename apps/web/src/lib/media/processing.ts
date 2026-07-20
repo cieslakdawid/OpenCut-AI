@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import type { MediaAsset } from "@/types/assets";
 import { getMediaTypeFromFile } from "@/lib/media/media-utils";
 import { getVideoInfo } from "./mediabunny";
+import { ensureDecodableVideo } from "./transcode";
 import { Input, ALL_FORMATS, BlobSource, VideoSampleSink } from "mediabunny";
 
 export interface ProcessedMediaAsset extends Omit<MediaAsset, "id"> {}
@@ -158,15 +159,17 @@ export async function processMediaAssets({
 	const total = fileArray.length;
 	let completed = 0;
 
-	for (const file of fileArray) {
-		const fileType = getMediaTypeFromFile({ file });
+	for (const originalFile of fileArray) {
+		const fileType = getMediaTypeFromFile({ file: originalFile });
 
 		if (!fileType) {
-			toast.error(`Unsupported file type: ${file.name}`);
+			toast.error(`Unsupported file type: ${originalFile.name}`);
 			continue;
 		}
 
-		const url = URL.createObjectURL(file);
+		// `file` may be swapped for a transcoded copy below (e.g. ProRes -> H.264).
+		let file = originalFile;
+		let url: string | undefined;
 		let thumbnailUrl: string | undefined;
 		let duration: number | undefined;
 		let width: number | undefined;
@@ -174,6 +177,14 @@ export async function processMediaAssets({
 		let fps: number | undefined;
 
 		try {
+			// If the browser can't decode this video's codec, transcode it via
+			// the backend before doing anything else with it.
+			if (fileType === "video") {
+				file = await ensureDecodableVideo(file);
+			}
+
+			url = URL.createObjectURL(file);
+
 			if (fileType === "image") {
 				const dimensions = await getImageDimensions({ file });
 				width = dimensions.width;
@@ -221,9 +232,11 @@ export async function processMediaAssets({
 				onProgress({ progress: percent });
 			}
 		} catch (error) {
-			console.error("Error processing file:", file.name, error);
-			toast.error(`Failed to process ${file.name}`);
-			URL.revokeObjectURL(url); // Clean up on error
+			console.error("Error processing file:", originalFile.name, error);
+			toast.error(`Failed to process ${originalFile.name}`);
+			if (url) {
+				URL.revokeObjectURL(url); // Clean up on error
+			}
 		}
 	}
 
